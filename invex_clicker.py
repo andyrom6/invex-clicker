@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import winsound
+from PIL import Image
 
 # ══════════════════════════════════════════════════════
 #  Windows SendInput Structures (64-bit)
@@ -34,7 +35,7 @@ class INPUT(ctypes.Structure):
 INPUT_SIZE = ctypes.sizeof(INPUT)
 
 # ══════════════════════════════════════════════════════
-#  InputEngine — all SendInput calls in one place
+#  InputEngine
 # ══════════════════════════════════════════════════════
 
 KEYS = {
@@ -149,45 +150,37 @@ class ProfileManager:
             os.remove(p)
 
 # ══════════════════════════════════════════════════════
-#  Design System — Premium Dark Theme
+#  Design System v5 — Sidebar + Depth
 # ══════════════════════════════════════════════════════
 
-# Base
-BG          = "#0A0A12"    # Deep void black
-SURFACE     = "#12121E"    # Card background
-SURFACE_2   = "#1A1A2E"    # Elevated surface / inputs
-SURFACE_3   = "#222238"    # Hover states
+# 4-level depth system (Proxima-style)
+D0 = "#0a0a0a"    # Void — window bg
+D1 = "#0f0f0f"    # Surface — sidebar, cards
+D2 = "#161616"    # Raised — inner containers
+D3 = "#1e1e1e"    # Elevated — inputs, hover bg
 
-# Borders
-BORDER      = "#2A2A40"    # Subtle borders
-BORDER_LIT  = "#3A3A5C"    # Active borders
-GLOW_LINE   = "#7C5CFC"    # Accent glow line
+# Interactive
+BTN     = "#2b2d31"    # Button default
+BTN_H   = "#3b3d41"    # Button hover
 
-# Brand Colors
-PRIMARY     = "#7C5CFC"    # Main purple
-PRIMARY_H   = "#9B7FFF"    # Purple hover
-PRIMARY_DIM = "#2A2050"    # Purple dim bg
+# Accent — single hero color + support
+ACCENT  = "#4a9eff"    # Primary blue
+ACCENT_H= "#5eb0ff"    # Blue hover
+ACCENT_D= "#2b5a8f"    # Blue dark / pressed
 
-CYAN        = "#00D4AA"    # Teal/cyan accent
-CYAN_H      = "#33E0C0"    # Cyan hover
-GREEN       = "#22C55E"    # Success green
-GREEN_H     = "#3DDC75"    # Green hover
-RED         = "#EF4444"    # Stop/danger
-RED_H       = "#F87171"    # Red hover
-ORANGE      = "#F59E0B"    # Warning/combo
-ORANGE_H    = "#FBBF24"    # Orange hover
-YELLOW      = "#EAB308"    # Yellow accents
+# Support accents (used sparingly)
+GREEN   = "#34d399"
+GREEN_H = "#6ee7b7"
+RED     = "#ef4444"
+RED_H   = "#f87171"
+ORANGE  = "#fb923c"
+ORANGE_H= "#fdba74"
 
-# Text
-TEXT_W      = "#FFFFFF"    # Pure white text
-TEXT        = "#E2E8F0"    # Primary text
-TEXT_2      = "#94A3B8"    # Secondary text
-TEXT_DIM    = "#64748B"    # Muted text
-TEXT_OFF    = "#334155"    # Disabled text
-
-# Tab colors
-TAB_BG      = "#16162A"    # Tab bar background
-TAB_SEL     = PRIMARY      # Selected tab
+# Text — 4 levels
+T1 = "#ffffff"     # Primary / headings
+T2 = "#c9d1d9"    # Body text
+T3 = "#8a8a8a"    # Secondary / labels
+T4 = "#5a5a5a"    # Muted / disabled
 
 # ══════════════════════════════════════════════════════
 #  Helpers
@@ -203,17 +196,27 @@ def sleep_check(delay, event):
 ctk.set_appearance_mode("dark")
 
 # ══════════════════════════════════════════════════════
-#  MAIN APP
+#  MAIN APP — Sidebar Layout
 # ══════════════════════════════════════════════════════
 
 class InvexClicker(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Invex Clicker")
-        self.geometry("520x780")
+        self.geometry("720x600")
         self.resizable(False, False)
-        self.configure(fg_color=BG)
+        self.configure(fg_color=D0)
         self.attributes("-topmost", True)
+
+        # Window icon
+        ico_name = "roblox_alt_macos_bigsur_icon_189774.ico"
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ico_name)
+        if not os.path.exists(icon_path) and hasattr(sys, "_MEIPASS"):
+            icon_path = os.path.join(sys._MEIPASS, ico_name)
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
+            self.after(200, lambda: self.iconbitmap(icon_path))
+        self._icon_path = icon_path
 
         # State
         self.stop_events = []
@@ -230,780 +233,705 @@ class InvexClicker(ctk.CTk):
         self.crosshair_win = None
         self.active_keys = []
         self.combo_steps = []
+        self.hotkey_vk = 0x75
+        self.panic_vk = 0x1B
+        self.nav_buttons = {}
+        self.pages = {}
+        self.current_page = None
 
-        self.hotkey_vk = 0x75   # F6
-        self.panic_vk = 0x1B   # Escape
-
-        self._build_header()
-        self._build_tabs()
-        self._build_log()
-        self._build_status_bar()
+        self._build_sidebar()
+        self._build_content_area()
+        self._build_pages()
+        self._show_page("key")
         self._tick_session()
 
         threading.Thread(target=self._hotkey_listener, daemon=True).start()
 
     # ─────────────────────────────────────────
-    #  HEADER — Clean minimal branding
+    #  SIDEBAR
     # ─────────────────────────────────────────
-    def _build_header(self):
-        hdr = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=56)
-        hdr.pack(fill="x")
-        hdr.pack_propagate(False)
+    def _build_sidebar(self):
+        self.sidebar = ctk.CTkFrame(self, fg_color=D1, width=180, corner_radius=0)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
 
-        inner = ctk.CTkFrame(hdr, fg_color="transparent")
-        inner.pack(fill="x", padx=20, expand=True)
+        # Brand
+        brand = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        brand.pack(fill="x", padx=16, pady=(20, 6))
 
-        # Logo icon — purple diamond
-        icon_frame = ctk.CTkFrame(inner, fg_color=PRIMARY, width=32, height=32, corner_radius=8)
-        icon_frame.pack(side="left")
-        icon_frame.pack_propagate(False)
-        ctk.CTkLabel(icon_frame, text="\u25C6", font=ctk.CTkFont(size=16),
-                     text_color="#FFFFFF").pack(expand=True)
+        # App icon from .ico file
+        try:
+            ico_img = Image.open(self._icon_path)
+            ico_img = ico_img.resize((32, 32), Image.LANCZOS)
+            self._sidebar_icon = ctk.CTkImage(light_image=ico_img, dark_image=ico_img, size=(32, 32))
+            ctk.CTkLabel(brand, image=self._sidebar_icon, text="").pack(side="left")
+        except Exception:
+            icon = ctk.CTkFrame(brand, fg_color=ACCENT, width=32, height=32, corner_radius=8)
+            icon.pack(side="left")
 
-        # Title
-        title_frame = ctk.CTkFrame(inner, fg_color="transparent")
-        title_frame.pack(side="left", padx=(12, 0))
-        ctk.CTkLabel(title_frame, text="INVEX CLICKER",
-                     font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-                     text_color=TEXT_W).pack(side="left")
+        tf = ctk.CTkFrame(brand, fg_color="transparent")
+        tf.pack(side="left", padx=(10, 0))
+        ctk.CTkLabel(tf, text="INVEX", font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+                     text_color=T1).pack(anchor="w")
+        ctk.CTkLabel(tf, text="Clicker v5", font=ctk.CTkFont(size=10),
+                     text_color=T4).pack(anchor="w")
 
-        # Version badge
-        ver = ctk.CTkFrame(inner, fg_color=PRIMARY_DIM, corner_radius=6, width=36, height=22,
-                           border_width=1, border_color=PRIMARY)
-        ver.pack(side="left", padx=(10, 0))
-        ver.pack_propagate(False)
-        ctk.CTkLabel(ver, text="v3", font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=PRIMARY).pack(expand=True)
+        # Separator
+        ctk.CTkFrame(self.sidebar, fg_color=D3, height=1).pack(fill="x", padx=16, pady=(16, 12))
 
-        # Status indicator on right
-        self.header_status_frame = ctk.CTkFrame(inner, fg_color="transparent")
-        self.header_status_frame.pack(side="right")
-        self.header_dot = ctk.CTkFrame(self.header_status_frame, width=8, height=8,
-                                        corner_radius=4, fg_color=TEXT_OFF)
-        self.header_dot.pack(side="left")
-        self.header_status_lbl = ctk.CTkLabel(self.header_status_frame, text="Ready",
-                                               font=ctk.CTkFont(size=10), text_color=TEXT_DIM)
-        self.header_status_lbl.pack(side="left", padx=(6, 0))
+        # Nav section label
+        ctk.CTkLabel(self.sidebar, text="MACROS", font=ctk.CTkFont(size=9, weight="bold"),
+                     text_color=T4).pack(anchor="w", padx=20, pady=(0, 4))
 
-        # Glow line under header
-        ctk.CTkFrame(self, fg_color=PRIMARY, height=2, corner_radius=0).pack(fill="x")
+        # Nav items
+        nav_items = [
+            ("key",      "Auto Key",    "\u2328"),
+            ("click",    "Auto Click",  "\u25CB"),
+            ("afk",      "Anti-AFK",    "\u26A1"),
+            ("combo",    "Combos",      "\u2263"),
+        ]
+        for page_id, label, ico in nav_items:
+            self._nav_button(page_id, f" {ico}  {label}")
+
+        ctk.CTkFrame(self.sidebar, fg_color=D3, height=1).pack(fill="x", padx=16, pady=(12, 12))
+        ctk.CTkLabel(self.sidebar, text="SYSTEM", font=ctk.CTkFont(size=9, weight="bold"),
+                     text_color=T4).pack(anchor="w", padx=20, pady=(0, 4))
+        self._nav_button("settings", " \u2699  Settings")
+
+        # Bottom status area
+        spacer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        spacer.pack(fill="both", expand=True)
+
+        # Live stats at bottom of sidebar
+        stats_frame = ctk.CTkFrame(self.sidebar, fg_color=D2, corner_radius=10)
+        stats_frame.pack(fill="x", padx=12, pady=(0, 12))
+
+        si = ctk.CTkFrame(stats_frame, fg_color="transparent")
+        si.pack(fill="x", padx=12, pady=10)
+
+        self.side_status_dot = ctk.CTkFrame(si, width=8, height=8, corner_radius=4, fg_color=T4)
+        self.side_status_dot.pack(side="left")
+        self.side_status_lbl = ctk.CTkLabel(si, text="Idle", font=ctk.CTkFont(size=10),
+                                             text_color=T4)
+        self.side_status_lbl.pack(side="left", padx=(6, 0))
+
+        self.session_lbl = ctk.CTkLabel(si, text="00:00",
+                                         font=ctk.CTkFont(family="Consolas", size=10),
+                                         text_color=T4)
+        self.session_lbl.pack(side="right")
+
+        s2 = ctk.CTkFrame(stats_frame, fg_color="transparent")
+        s2.pack(fill="x", padx=12, pady=(0, 10))
+        self.stat_presses = ctk.CTkLabel(s2, text="0 presses",
+                                          font=ctk.CTkFont(size=9), text_color=T4)
+        self.stat_presses.pack(side="left")
+        self.stat_clicks = ctk.CTkLabel(s2, text="0 clicks",
+                                         font=ctk.CTkFont(size=9), text_color=T4)
+        self.stat_clicks.pack(side="right")
+
+        self.timer_status = ctk.CTkLabel(self.sidebar, text="",
+                                          font=ctk.CTkFont(size=9), text_color=ORANGE)
+        self.timer_status.pack(pady=(0, 8))
+
+    def _nav_button(self, page_id, label):
+        btn = ctk.CTkButton(
+            self.sidebar, text=label, anchor="w",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color="transparent", hover_color=D3,
+            text_color=T3, height=36, corner_radius=8,
+            command=lambda p=page_id: self._show_page(p))
+        btn.pack(fill="x", padx=10, pady=1)
+        self.nav_buttons[page_id] = btn
+
+    def _show_page(self, page_id):
+        # Update nav highlight
+        for pid, btn in self.nav_buttons.items():
+            if pid == page_id:
+                btn.configure(fg_color=ACCENT, text_color=T1, hover_color=ACCENT_H)
+            else:
+                btn.configure(fg_color="transparent", text_color=T3, hover_color=D3)
+        # Show/hide pages
+        for pid, frame in self.pages.items():
+            if pid == page_id:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        self.current_page = page_id
 
     # ─────────────────────────────────────────
-    #  TAB BAR — Sleek segmented tabs
+    #  CONTENT AREA
     # ─────────────────────────────────────────
-    def _build_tabs(self):
-        self.tabview = ctk.CTkTabview(
-            self, fg_color=BG, corner_radius=0,
-            segmented_button_fg_color=TAB_BG,
-            segmented_button_selected_color=PRIMARY,
-            segmented_button_selected_hover_color=PRIMARY_H,
-            segmented_button_unselected_color=TAB_BG,
-            segmented_button_unselected_hover_color=SURFACE_3,
-            text_color="#FFFFFF",
-            text_color_disabled=TEXT_DIM,
-            border_width=0
-        )
-        self.tabview.pack(fill="both", expand=True, padx=0, pady=0)
+    def _build_content_area(self):
+        # Thin accent line between sidebar and content
+        ctk.CTkFrame(self, fg_color=D2, width=1, corner_radius=0).pack(side="left", fill="y")
+        self.content = ctk.CTkFrame(self, fg_color=D0, corner_radius=0)
+        self.content.pack(side="left", fill="both", expand=True)
 
-        for t in ["Auto Key", "Auto Click", "Anti-AFK", "Combos", "Settings"]:
-            self.tabview.add(t)
+    def _build_pages(self):
+        for pid in ["key", "click", "afk", "combo", "settings"]:
+            page = ctk.CTkFrame(self.content, fg_color=D0, corner_radius=0)
+            self.pages[pid] = page
+        self._build_key_page(self.pages["key"])
+        self._build_click_page(self.pages["click"])
+        self._build_afk_page(self.pages["afk"])
+        self._build_combo_page(self.pages["combo"])
+        self._build_settings_page(self.pages["settings"])
 
-        self._build_key_tab(self.tabview.tab("Auto Key"))
-        self._build_click_tab(self.tabview.tab("Auto Click"))
-        self._build_afk_tab(self.tabview.tab("Anti-AFK"))
-        self._build_combo_tab(self.tabview.tab("Combos"))
-        self._build_settings_tab(self.tabview.tab("Settings"))
+    # ─────────────────────────────────────────
+    #  PAGE HEADER HELPER
+    # ─────────────────────────────────────────
+    def _page_header(self, parent, title, subtitle=""):
+        hdr = ctk.CTkFrame(parent, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(20, 4))
+        ctk.CTkLabel(hdr, text=title,
+                     font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+                     text_color=T1).pack(anchor="w")
+        if subtitle:
+            ctk.CTkLabel(hdr, text=subtitle,
+                         font=ctk.CTkFont(size=12), text_color=T4).pack(anchor="w", pady=(2, 0))
+
+    def _card(self, parent, pady=(0, 0)):
+        c = ctk.CTkFrame(parent, fg_color=D1, corner_radius=12, border_width=0)
+        c.pack(fill="x", padx=24, pady=pady)
+        return c
+
+    def _row(self, parent, pady=(0, 0)):
+        r = ctk.CTkFrame(parent, fg_color="transparent")
+        r.pack(fill="x", padx=20, pady=pady)
+        r.grid_columnconfigure(1, weight=1)
+        return r
+
+    def _label(self, parent, text):
+        return ctk.CTkLabel(parent, text=text,
+                            font=ctk.CTkFont(size=13), text_color=T2)
 
     # ══════════════════════════════════════════
-    #  AUTO KEY TAB
+    #  AUTO KEY PAGE
     # ══════════════════════════════════════════
+    def _build_key_page(self, page):
+        self._page_header(page, "Auto Key", "Spam or hold keys automatically")
 
-    def _build_key_tab(self, tab):
-        tab.configure(fg_color=BG)
-        c = ctk.CTkFrame(tab, fg_color="transparent")
-        c.pack(fill="both", expand=True, padx=16, pady=8)
-
-        # ── Stat cards row ──
-        sr = ctk.CTkFrame(c, fg_color="transparent")
-        sr.pack(fill="x", pady=(0, 10))
+        # Stats row
+        sr = ctk.CTkFrame(page, fg_color="transparent")
+        sr.pack(fill="x", padx=24, pady=(12, 0))
         sr.grid_columnconfigure((0, 1, 2), weight=1)
-        self.key_stat_count = self._stat_card(sr, "PRESSES", "0", PRIMARY, 0)
-        self.key_stat_speed = self._stat_card(sr, "SPEED", "10/s", CYAN, 1)
-        self.key_stat_key = self._stat_card(sr, "KEY", "Space", ORANGE, 2)
+        self.key_stat_count = self._stat_chip(sr, "Presses", "0", ACCENT, 0)
+        self.key_stat_speed = self._stat_chip(sr, "Speed", "10/s", T2, 1)
+        self.key_stat_key = self._stat_chip(sr, "Key", "Space", T2, 2)
 
-        # ── Main config card ──
-        card = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=16,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x")
+        # Config card
+        card = self._card(page, pady=(12, 0))
 
-        # Status header inside card
-        self._card_status_header(card, "key")
-
-        # Key selector row
-        r1 = ctk.CTkFrame(card, fg_color="transparent")
-        r1.pack(fill="x", padx=18, pady=(12, 0))
-        r1.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(r1, text="Key", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_2).grid(row=0, column=0, sticky="w")
+        # Key
+        r = self._row(card, pady=(16, 0))
+        self._label(r, "Key").grid(row=0, column=0, sticky="w")
         self.key_sel = ctk.CTkOptionMenu(
-            r1, values=list(KEYS.keys()), width=100, height=30,
-            fg_color=SURFACE_2, button_color=PRIMARY, button_hover_color=PRIMARY_H,
-            text_color=TEXT, dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=12), corner_radius=8,
+            r, values=list(KEYS.keys()), width=120, height=32,
+            fg_color=D3, button_color=BTN, button_hover_color=BTN_H,
+            text_color=T1, dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=12), corner_radius=8,
             command=lambda v: self.key_stat_key.configure(text=v))
         self.key_sel.set("Space")
         self.key_sel.grid(row=0, column=1, sticky="e")
 
-        # Mode selector
-        r2 = ctk.CTkFrame(card, fg_color="transparent")
-        r2.pack(fill="x", padx=18, pady=(10, 0))
-        r2.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(r2, text="Mode", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_2).grid(row=0, column=0, sticky="w")
+        # Mode
+        r = self._row(card, pady=(10, 0))
+        self._label(r, "Mode").grid(row=0, column=0, sticky="w")
         self.key_mode = ctk.CTkSegmentedButton(
-            r2, values=["Spam", "Hold"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color=SURFACE_2, selected_color=PRIMARY, selected_hover_color=PRIMARY_H,
-            unselected_color=SURFACE_2, unselected_hover_color=SURFACE_3,
-            text_color="#FFFFFF", corner_radius=8, height=30)
+            r, values=["Spam", "Hold"],
+            font=ctk.CTkFont(size=12), fg_color=D3,
+            selected_color=ACCENT, selected_hover_color=ACCENT_H,
+            unselected_color=D3, unselected_hover_color=BTN_H,
+            text_color=T1, corner_radius=8, height=32)
         self.key_mode.set("Spam")
         self.key_mode.grid(row=0, column=1, sticky="e")
 
-        # Speed slider
+        # Speed
         sf = ctk.CTkFrame(card, fg_color="transparent")
-        sf.pack(fill="x", padx=18, pady=(12, 0))
+        sf.pack(fill="x", padx=20, pady=(14, 0))
         sft = ctk.CTkFrame(sf, fg_color="transparent")
         sft.pack(fill="x")
-        ctk.CTkLabel(sft, text="Speed", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_2).pack(side="left")
+        ctk.CTkLabel(sft, text="Speed", font=ctk.CTkFont(size=13),
+                     text_color=T2).pack(side="left")
         self.key_speed_lbl = ctk.CTkLabel(sft, text="10 /sec",
-                                           font=ctk.CTkFont(size=12, weight="bold"),
-                                           text_color=PRIMARY)
+                                           font=ctk.CTkFont(family="Consolas", size=13, weight="bold"),
+                                           text_color=ACCENT)
         self.key_speed_lbl.pack(side="right")
         self.key_speed = ctk.CTkSlider(
             sf, from_=1, to=20, number_of_steps=19,
-            button_color=PRIMARY, button_hover_color=PRIMARY_H,
-            fg_color=SURFACE_2, progress_color=PRIMARY, height=16)
+            button_color="#ffffff", button_hover_color=T2,
+            fg_color=D3, progress_color=ACCENT, height=16)
         self.key_speed.set(10)
-        self.key_speed.pack(fill="x", pady=(6, 0))
+        self.key_speed.pack(fill="x", pady=(8, 0))
         self.key_speed.configure(command=lambda v: (
             self.key_speed_lbl.configure(text=f"{int(v)} /sec"),
             self.key_stat_speed.configure(text=f"{int(v)}/s")
         ))
 
         # Divider
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18, pady=(12, 0))
+        ctk.CTkFrame(card, fg_color=D2, height=1).pack(fill="x", padx=20, pady=(14, 0))
 
-        # Options row
+        # Humanize
         opts = ctk.CTkFrame(card, fg_color="transparent")
-        opts.pack(fill="x", padx=18, pady=(10, 0))
+        opts.pack(fill="x", padx=20, pady=(12, 0))
         self.key_human_var = ctk.StringVar(value="off")
-        ctk.CTkSwitch(opts, text="Humanize timing", font=ctk.CTkFont(size=11),
-                      text_color=TEXT_2, variable=self.key_human_var,
+        ctk.CTkSwitch(opts, text="Humanize timing", font=ctk.CTkFont(size=12),
+                      text_color=T3, variable=self.key_human_var,
                       onvalue="on", offvalue="off",
-                      button_color=PRIMARY, button_hover_color=PRIMARY_H,
-                      fg_color=SURFACE_2, progress_color=PRIMARY, height=24).pack(side="left")
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=ACCENT, height=24).pack(side="left")
 
-        # Multi-key input
+        # Multi-key
         mk = ctk.CTkFrame(card, fg_color="transparent")
-        mk.pack(fill="x", padx=18, pady=(8, 0))
-        ctk.CTkLabel(mk, text="Multi-Key", font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=TEXT_2).pack(side="left")
+        mk.pack(fill="x", padx=20, pady=(10, 0))
+        ctk.CTkLabel(mk, text="Multi-Key", font=ctk.CTkFont(size=12),
+                     text_color=T3).pack(side="left")
         self.multi_key = ctk.CTkEntry(
-            mk, placeholder_text="e.g. E, F, Space", width=180, height=30,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
-            font=ctk.CTkFont(size=11), corner_radius=8,
-            placeholder_text_color=TEXT_OFF)
+            mk, placeholder_text="e.g. E, F, Space", width=180, height=32,
+            fg_color=D3, border_width=0, text_color=T1,
+            font=ctk.CTkFont(size=12), corner_radius=8,
+            placeholder_text_color=T4)
         self.multi_key.pack(side="right")
 
-        # START button
+        # Start
         self.key_btn = ctk.CTkButton(
-            card, text="\u25B6  START", font=ctk.CTkFont(size=15, weight="bold"),
-            height=44, fg_color=PRIMARY, hover_color=PRIMARY_H, text_color="#FFFFFF",
+            card, text="Start", font=ctk.CTkFont(size=14, weight="bold"),
+            height=44, fg_color=ACCENT, hover_color=ACCENT_H, text_color=T1,
             corner_radius=10, command=self._toggle_key)
-        self.key_btn.pack(fill="x", padx=18, pady=(14, 16))
+        self.key_btn.pack(fill="x", padx=20, pady=(16, 20))
 
     # ══════════════════════════════════════════
-    #  AUTO CLICK TAB
+    #  AUTO CLICK PAGE
     # ══════════════════════════════════════════
+    def _build_click_page(self, page):
+        self._page_header(page, "Auto Click", "Click automatically at set speed")
 
-    def _build_click_tab(self, tab):
-        tab.configure(fg_color=BG)
-        c = ctk.CTkFrame(tab, fg_color="transparent")
-        c.pack(fill="both", expand=True, padx=16, pady=8)
-
-        # Stats
-        sr = ctk.CTkFrame(c, fg_color="transparent")
-        sr.pack(fill="x", pady=(0, 10))
+        sr = ctk.CTkFrame(page, fg_color="transparent")
+        sr.pack(fill="x", padx=24, pady=(12, 0))
         sr.grid_columnconfigure((0, 1, 2), weight=1)
-        self.click_stat_count = self._stat_card(sr, "CLICKS", "0", CYAN, 0)
-        self.click_stat_speed = self._stat_card(sr, "SPEED", "10/s", PRIMARY, 1)
-        self.click_stat_type = self._stat_card(sr, "BUTTON", "Left", ORANGE, 2)
+        self.click_stat_count = self._stat_chip(sr, "Clicks", "0", ACCENT, 0)
+        self.click_stat_speed = self._stat_chip(sr, "Speed", "10/s", T2, 1)
+        self.click_stat_type = self._stat_chip(sr, "Button", "Left", T2, 2)
 
-        # Card
-        card = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=16,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x")
-
-        self._card_status_header(card, "click")
+        card = self._card(page, pady=(12, 0))
 
         # Button type
-        r1 = ctk.CTkFrame(card, fg_color="transparent")
-        r1.pack(fill="x", padx=18, pady=(12, 0))
-        r1.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(r1, text="Button", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_2).grid(row=0, column=0, sticky="w")
+        r = self._row(card, pady=(16, 0))
+        self._label(r, "Button").grid(row=0, column=0, sticky="w")
         self.click_type = ctk.CTkSegmentedButton(
-            r1, values=["Left", "Right"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color=SURFACE_2, selected_color=CYAN, selected_hover_color=CYAN_H,
-            unselected_color=SURFACE_2, unselected_hover_color=SURFACE_3,
-            text_color="#FFFFFF", corner_radius=8, height=30,
+            r, values=["Left", "Right"],
+            font=ctk.CTkFont(size=12), fg_color=D3,
+            selected_color=ACCENT, selected_hover_color=ACCENT_H,
+            unselected_color=D3, unselected_hover_color=BTN_H,
+            text_color=T1, corner_radius=8, height=32,
             command=lambda v: self.click_stat_type.configure(text=v))
         self.click_type.set("Left")
         self.click_type.grid(row=0, column=1, sticky="e")
 
         # Speed
         sf = ctk.CTkFrame(card, fg_color="transparent")
-        sf.pack(fill="x", padx=18, pady=(12, 0))
+        sf.pack(fill="x", padx=20, pady=(14, 0))
         sft = ctk.CTkFrame(sf, fg_color="transparent")
         sft.pack(fill="x")
-        ctk.CTkLabel(sft, text="Speed", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_2).pack(side="left")
+        ctk.CTkLabel(sft, text="Speed", font=ctk.CTkFont(size=13),
+                     text_color=T2).pack(side="left")
         self.click_speed_lbl = ctk.CTkLabel(sft, text="10 /sec",
-                                             font=ctk.CTkFont(size=12, weight="bold"),
-                                             text_color=CYAN)
+                                             font=ctk.CTkFont(family="Consolas", size=13, weight="bold"),
+                                             text_color=ACCENT)
         self.click_speed_lbl.pack(side="right")
         self.click_speed = ctk.CTkSlider(
             sf, from_=1, to=20, number_of_steps=19,
-            button_color=CYAN, button_hover_color=CYAN_H,
-            fg_color=SURFACE_2, progress_color=CYAN, height=16)
+            button_color="#ffffff", button_hover_color=T2,
+            fg_color=D3, progress_color=ACCENT, height=16)
         self.click_speed.set(10)
-        self.click_speed.pack(fill="x", pady=(6, 0))
+        self.click_speed.pack(fill="x", pady=(8, 0))
         self.click_speed.configure(command=lambda v: (
             self.click_speed_lbl.configure(text=f"{int(v)} /sec"),
             self.click_stat_speed.configure(text=f"{int(v)}/s")
         ))
 
-        # Divider
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18, pady=(12, 0))
+        ctk.CTkFrame(card, fg_color=D2, height=1).pack(fill="x", padx=20, pady=(14, 0))
 
-        # Humanize
+        # Options
         o1 = ctk.CTkFrame(card, fg_color="transparent")
-        o1.pack(fill="x", padx=18, pady=(10, 0))
+        o1.pack(fill="x", padx=20, pady=(12, 0))
         self.click_human_var = ctk.StringVar(value="off")
-        ctk.CTkSwitch(o1, text="Humanize timing", font=ctk.CTkFont(size=11),
-                      text_color=TEXT_2, variable=self.click_human_var,
+        ctk.CTkSwitch(o1, text="Humanize timing", font=ctk.CTkFont(size=12),
+                      text_color=T3, variable=self.click_human_var,
                       onvalue="on", offvalue="off",
-                      button_color=CYAN, button_hover_color=CYAN_H,
-                      fg_color=SURFACE_2, progress_color=CYAN, height=24).pack(side="left")
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=ACCENT, height=24).pack(side="left")
 
-        # Burst mode
         o2 = ctk.CTkFrame(card, fg_color="transparent")
-        o2.pack(fill="x", padx=18, pady=(8, 0))
+        o2.pack(fill="x", padx=20, pady=(8, 0))
         self.burst_var = ctk.StringVar(value="off")
-        ctk.CTkSwitch(o2, text="Burst mode", font=ctk.CTkFont(size=11),
-                      text_color=TEXT_2, variable=self.burst_var,
+        ctk.CTkSwitch(o2, text="Burst mode", font=ctk.CTkFont(size=12),
+                      text_color=T3, variable=self.burst_var,
                       onvalue="on", offvalue="off",
-                      button_color=CYAN, button_hover_color=CYAN_H,
-                      fg_color=SURFACE_2, progress_color=CYAN, height=24).pack(side="left")
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=ACCENT, height=24).pack(side="left")
         self.burst_count = ctk.CTkEntry(
-            o2, placeholder_text="10", width=60, height=28,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            o2, placeholder_text="10", width=60, height=30,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.burst_count.pack(side="right")
         ctk.CTkLabel(o2, text="Count:", font=ctk.CTkFont(size=10),
-                     text_color=TEXT_DIM).pack(side="right", padx=(0, 6))
+                     text_color=T4).pack(side="right", padx=(0, 6))
 
-        # Fixed position
         o3 = ctk.CTkFrame(card, fg_color="transparent")
-        o3.pack(fill="x", padx=18, pady=(8, 0))
+        o3.pack(fill="x", padx=20, pady=(8, 0))
         self.fixed_var = ctk.StringVar(value="off")
-        ctk.CTkSwitch(o3, text="Fixed position", font=ctk.CTkFont(size=11),
-                      text_color=TEXT_2, variable=self.fixed_var,
+        ctk.CTkSwitch(o3, text="Fixed position", font=ctk.CTkFont(size=12),
+                      text_color=T3, variable=self.fixed_var,
                       onvalue="on", offvalue="off",
-                      button_color=CYAN, button_hover_color=CYAN_H,
-                      fg_color=SURFACE_2, progress_color=CYAN, height=24).pack(side="left")
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=ACCENT, height=24).pack(side="left")
 
-        # Coordinates
         coord = ctk.CTkFrame(card, fg_color="transparent")
-        coord.pack(fill="x", padx=18, pady=(6, 0))
+        coord.pack(fill="x", padx=20, pady=(6, 0))
         ctk.CTkLabel(coord, text="X", font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=TEXT_DIM).pack(side="left")
+                     text_color=T4).pack(side="left")
         self.pos_x = ctk.CTkEntry(
             coord, placeholder_text="960", width=60, height=28,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.pos_x.pack(side="left", padx=(4, 12))
         ctk.CTkLabel(coord, text="Y", font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=TEXT_DIM).pack(side="left")
+                     text_color=T4).pack(side="left")
         self.pos_y = ctk.CTkEntry(
             coord, placeholder_text="540", width=60, height=28,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.pos_y.pack(side="left", padx=(4, 12))
         ctk.CTkButton(
             coord, text="Pick", font=ctk.CTkFont(size=10, weight="bold"),
-            width=50, height=28, fg_color=SURFACE_2, hover_color=SURFACE_3,
-            text_color=CYAN, corner_radius=8, border_width=1, border_color=BORDER,
+            width=50, height=28, fg_color=BTN, hover_color=BTN_H,
+            text_color=ACCENT, corner_radius=8,
             command=self._pick_pos).pack(side="left")
 
-        # START button
         self.click_btn = ctk.CTkButton(
-            card, text="\u25B6  START", font=ctk.CTkFont(size=15, weight="bold"),
-            height=44, fg_color=CYAN, hover_color=CYAN_H, text_color="#0A0A12",
+            card, text="Start", font=ctk.CTkFont(size=14, weight="bold"),
+            height=44, fg_color=ACCENT, hover_color=ACCENT_H, text_color=T1,
             corner_radius=10, command=self._toggle_click)
-        self.click_btn.pack(fill="x", padx=18, pady=(14, 16))
+        self.click_btn.pack(fill="x", padx=20, pady=(16, 20))
 
         # Cursor tracker
-        cur = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=12,
-                           border_width=1, border_color=BORDER)
-        cur.pack(fill="x", pady=(10, 0))
+        cur = ctk.CTkFrame(page, fg_color=D1, corner_radius=10)
+        cur.pack(fill="x", padx=24, pady=(10, 0))
         ci = ctk.CTkFrame(cur, fg_color="transparent")
         ci.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(ci, text="\u2316  Cursor Position",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=TEXT_2).pack(side="left")
+        ctk.CTkLabel(ci, text="Cursor",
+                     font=ctk.CTkFont(size=11), text_color=T4).pack(side="left")
         self.cursor_lbl = ctk.CTkLabel(
             ci, text="X: 0  Y: 0",
             font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
-            text_color=CYAN)
+            text_color=ACCENT)
         self.cursor_lbl.pack(side="right")
         self._tick_cursor()
 
     # ══════════════════════════════════════════
-    #  ANTI-AFK TAB
+    #  ANTI-AFK PAGE
     # ══════════════════════════════════════════
+    def _build_afk_page(self, page):
+        self._page_header(page, "Anti-AFK", "Keep your character moving to avoid kicks")
 
-    def _build_afk_tab(self, tab):
-        tab.configure(fg_color=BG)
-        c = ctk.CTkFrame(tab, fg_color="transparent")
-        c.pack(fill="both", expand=True, padx=16, pady=8)
+        card = self._card(page, pady=(16, 0))
 
-        card = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=16,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x")
-
-        # Header
-        sh = ctk.CTkFrame(card, fg_color="transparent")
-        sh.pack(fill="x", padx=18, pady=(16, 10))
-        ctk.CTkLabel(sh, text="\u26A1  Anti-AFK",
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     text_color=TEXT_W).pack(side="left")
-        self.afk_dot = ctk.CTkFrame(sh, width=10, height=10, corner_radius=5,
-                                     fg_color=TEXT_OFF)
-        self.afk_dot.pack(side="right")
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18)
-
-        desc = ctk.CTkLabel(
-            card, text="Keep your character moving to avoid being kicked. Toggle the actions you want.",
-            font=ctk.CTkFont(size=11), text_color=TEXT_DIM, wraplength=420)
-        desc.pack(padx=18, pady=(10, 8), anchor="w")
-
-        # Toggle options
         self.afk_spin_var = ctk.StringVar(value="on")
         self.afk_wasd_var = ctk.StringVar(value="on")
         self.afk_jump_var = ctk.StringVar(value="off")
         self.afk_jitter_var = ctk.StringVar(value="off")
 
         afk_opts = [
-            ("\uD83C\uDFA5", "Camera Spin", "Slowly rotates camera", self.afk_spin_var, PRIMARY),
-            ("\uD83C\uDFAE", "Random Movement", "Random W/A/S/D presses", self.afk_wasd_var, CYAN),
-            ("\u2B06", "Random Jump", "Jumps at intervals", self.afk_jump_var, GREEN),
-            ("\u2726", "Mouse Jitter", "Tiny mouse movements", self.afk_jitter_var, ORANGE),
+            ("Camera Spin",      "Slowly rotates camera",   self.afk_spin_var),
+            ("Random Movement",  "Random W/A/S/D presses",  self.afk_wasd_var),
+            ("Random Jump",      "Jumps at random intervals", self.afk_jump_var),
+            ("Mouse Jitter",     "Tiny mouse movements",    self.afk_jitter_var),
         ]
 
-        for icon, label, desc_text, var, color in afk_opts:
+        for i, (label, desc_text, var) in enumerate(afk_opts):
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", padx=18, pady=(6, 0))
+            row.pack(fill="x", padx=20, pady=(16 if i == 0 else 4, 0))
 
-            # Option card style
-            opt_bg = ctk.CTkFrame(row, fg_color=SURFACE_2, corner_radius=10,
-                                  border_width=1, border_color=BORDER)
-            opt_bg.pack(fill="x")
-
-            inner = ctk.CTkFrame(opt_bg, fg_color="transparent")
-            inner.pack(fill="x", padx=12, pady=10)
+            opt = ctk.CTkFrame(row, fg_color=D2, corner_radius=10)
+            opt.pack(fill="x")
+            inner = ctk.CTkFrame(opt, fg_color="transparent")
+            inner.pack(fill="x", padx=14, pady=12)
 
             ctk.CTkSwitch(inner, text="", variable=var, onvalue="on", offvalue="off",
-                          button_color=color, button_hover_color=color,
-                          fg_color=BORDER, progress_color=color,
+                          button_color="#ffffff", button_hover_color=T2,
+                          fg_color=D3, progress_color=ACCENT,
                           height=22, width=40).pack(side="left")
 
             tf = ctk.CTkFrame(inner, fg_color="transparent")
-            tf.pack(side="left", padx=(10, 0))
-            ctk.CTkLabel(tf, text=label, font=ctk.CTkFont(size=12, weight="bold"),
-                         text_color=TEXT).pack(anchor="w")
+            tf.pack(side="left", padx=(12, 0))
+            ctk.CTkLabel(tf, text=label, font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=T1).pack(anchor="w")
             ctk.CTkLabel(tf, text=desc_text, font=ctk.CTkFont(size=10),
-                         text_color=TEXT_DIM).pack(anchor="w")
+                         text_color=T4).pack(anchor="w")
 
-        # Button
         self.afk_btn = ctk.CTkButton(
-            card, text="\u25B6  START ANTI-AFK",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            height=44, fg_color=GREEN, hover_color=GREEN_H, text_color="#0A0A12",
+            card, text="Start Anti-AFK",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=44, fg_color=GREEN, hover_color=GREEN_H, text_color="#0a0a0a",
             corner_radius=10, command=self._toggle_afk)
-        self.afk_btn.pack(fill="x", padx=18, pady=(14, 16))
-
-        # Tip
-        tip = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=12,
-                           border_width=1, border_color=BORDER)
-        tip.pack(fill="x", pady=(10, 0))
-        ctk.CTkLabel(
-            tip, text="\U0001F4A1  Tip: Camera Spin + Movement is the best combo for staying in-game.",
-            font=ctk.CTkFont(size=10), text_color=TEXT_DIM, wraplength=420).pack(padx=16, pady=10)
+        self.afk_btn.pack(fill="x", padx=20, pady=(16, 20))
 
     # ══════════════════════════════════════════
-    #  COMBOS TAB
+    #  COMBOS PAGE
     # ══════════════════════════════════════════
+    def _build_combo_page(self, page):
+        self._page_header(page, "Combos", "Build key sequences with delays")
 
-    def _build_combo_tab(self, tab):
-        tab.configure(fg_color=BG)
-        c = ctk.CTkFrame(tab, fg_color="transparent")
-        c.pack(fill="both", expand=True, padx=16, pady=8)
-
-        card = ctk.CTkFrame(c, fg_color=SURFACE, corner_radius=16,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x")
-
-        sh = ctk.CTkFrame(card, fg_color="transparent")
-        sh.pack(fill="x", padx=18, pady=(16, 10))
-        ctk.CTkLabel(sh, text="\u2328  Key Combos",
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     text_color=TEXT_W).pack(side="left")
-        self.combo_dot = ctk.CTkFrame(sh, width=10, height=10, corner_radius=5,
-                                       fg_color=TEXT_OFF)
-        self.combo_dot.pack(side="right")
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18)
-
-        ctk.CTkLabel(card, text="Build a key sequence with delays between each step.",
-                     font=ctk.CTkFont(size=11), text_color=TEXT_DIM).pack(
-                         padx=18, pady=(10, 8), anchor="w")
+        card = self._card(page, pady=(16, 0))
 
         # Sequence list
         self.combo_list_frame = ctk.CTkScrollableFrame(
-            card, fg_color=SURFACE_2, corner_radius=10,
-            height=110, border_width=1, border_color=BORDER)
-        self.combo_list_frame.pack(fill="x", padx=18, pady=(0, 8))
+            card, fg_color=D2, corner_radius=10,
+            height=130, border_width=0)
+        self.combo_list_frame.pack(fill="x", padx=20, pady=(16, 8))
         self.combo_labels = []
 
         # Add controls
         add_row = ctk.CTkFrame(card, fg_color="transparent")
-        add_row.pack(fill="x", padx=18, pady=(0, 4))
+        add_row.pack(fill="x", padx=20, pady=(4, 0))
         self.combo_key_sel = ctk.CTkOptionMenu(
-            add_row, values=list(KEYS.keys()), width=90, height=30,
-            fg_color=SURFACE_2, button_color=PRIMARY, button_hover_color=PRIMARY_H,
-            text_color=TEXT, dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=11), corner_radius=8)
+            add_row, values=list(KEYS.keys()), width=90, height=32,
+            fg_color=D3, button_color=BTN, button_hover_color=BTN_H,
+            text_color=T1, dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=11), corner_radius=8)
         self.combo_key_sel.set("Z")
         self.combo_key_sel.pack(side="left")
 
         ctk.CTkLabel(add_row, text="Delay:", font=ctk.CTkFont(size=10),
-                     text_color=TEXT_DIM).pack(side="left", padx=(12, 4))
+                     text_color=T4).pack(side="left", padx=(14, 4))
         self.combo_delay = ctk.CTkEntry(
-            add_row, placeholder_text="100ms", width=65, height=30,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            add_row, placeholder_text="100ms", width=70, height=32,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.combo_delay.pack(side="left")
 
         ctk.CTkButton(
             add_row, text="+ Add", font=ctk.CTkFont(size=11, weight="bold"),
-            width=56, height=30, fg_color=PRIMARY, hover_color=PRIMARY_H,
-            text_color="#FFF", corner_radius=8, command=self._combo_add).pack(
-                side="left", padx=(12, 0))
+            width=60, height=32, fg_color=ACCENT, hover_color=ACCENT_H,
+            text_color=T1, corner_radius=8, command=self._combo_add).pack(
+                side="left", padx=(14, 0))
         ctk.CTkButton(
             add_row, text="Clear", font=ctk.CTkFont(size=11, weight="bold"),
-            width=52, height=30, fg_color=SURFACE_2, hover_color=SURFACE_3,
-            text_color=RED, corner_radius=8, border_width=1, border_color=BORDER,
+            width=56, height=32, fg_color=BTN, hover_color=BTN_H,
+            text_color=RED, corner_radius=8,
             command=self._combo_clear).pack(side="left", padx=(6, 0))
 
-        # Loop toggle
+        # Loop
         loop_row = ctk.CTkFrame(card, fg_color="transparent")
-        loop_row.pack(fill="x", padx=18, pady=(8, 0))
+        loop_row.pack(fill="x", padx=20, pady=(10, 0))
         self.combo_loop_var = ctk.StringVar(value="on")
         ctk.CTkSwitch(loop_row, text="Loop continuously",
-                      font=ctk.CTkFont(size=11), text_color=TEXT_2,
+                      font=ctk.CTkFont(size=12), text_color=T3,
                       variable=self.combo_loop_var, onvalue="on", offvalue="off",
-                      button_color=ORANGE, button_hover_color=ORANGE_H,
-                      fg_color=SURFACE_2, progress_color=ORANGE, height=24).pack(side="left")
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=ACCENT, height=24).pack(side="left")
 
-        # Button
         self.combo_btn = ctk.CTkButton(
-            card, text="\u25B6  START COMBO",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            height=44, fg_color=ORANGE, hover_color=ORANGE_H, text_color="#0A0A12",
+            card, text="Start Combo",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=44, fg_color=ORANGE, hover_color=ORANGE_H, text_color="#0a0a0a",
             corner_radius=10, command=self._toggle_combo)
-        self.combo_btn.pack(fill="x", padx=18, pady=(14, 16))
+        self.combo_btn.pack(fill="x", padx=20, pady=(16, 20))
 
     # ══════════════════════════════════════════
-    #  SETTINGS TAB
+    #  SETTINGS PAGE
     # ══════════════════════════════════════════
+    def _build_settings_page(self, page):
+        self._page_header(page, "Settings", "Hotkeys, timer, crosshair & profiles")
 
-    def _build_settings_tab(self, tab):
-        tab.configure(fg_color=BG)
-        c = ctk.CTkScrollableFrame(tab, fg_color=BG)
-        c.pack(fill="both", expand=True, padx=16, pady=8)
+        scroll = ctk.CTkScrollableFrame(page, fg_color=D0, border_width=0)
+        scroll.pack(fill="both", expand=True, padx=0, pady=(8, 0))
 
         # ── Hotkeys ──
-        card1 = self._settings_card(c, "\u2318  Hotkeys")
+        card1 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card1.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card1, text="Hotkeys", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
 
-        hk1 = ctk.CTkFrame(card1, fg_color="transparent")
-        hk1.pack(fill="x", padx=18, pady=(10, 0))
-        hk1.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(hk1, text="Toggle Hotkey", font=ctk.CTkFont(size=11),
-                     text_color=TEXT_2).grid(row=0, column=0, sticky="w")
+        r = self._row(card1, pady=(0, 0))
+        self._label(r, "Toggle Hotkey").grid(row=0, column=0, sticky="w")
         self.hotkey_sel = ctk.CTkOptionMenu(
-            hk1, values=[k for k in HOTKEY_MAP if k != "Escape"],
-            width=100, height=30, fg_color=SURFACE_2, button_color=PRIMARY,
-            button_hover_color=PRIMARY_H, text_color=TEXT,
-            dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=11), corner_radius=8,
+            r, values=[k for k in HOTKEY_MAP if k != "Escape"],
+            width=100, height=32, fg_color=D3, button_color=BTN,
+            button_hover_color=BTN_H, text_color=T1,
+            dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=11), corner_radius=8,
             command=self._on_hotkey_change)
         self.hotkey_sel.set("F6")
         self.hotkey_sel.grid(row=0, column=1, sticky="e")
 
-        hk2 = ctk.CTkFrame(card1, fg_color="transparent")
-        hk2.pack(fill="x", padx=18, pady=(8, 14))
-        hk2.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(hk2, text="Panic Key (stop all)", font=ctk.CTkFont(size=11),
-                     text_color=TEXT_2).grid(row=0, column=0, sticky="w")
+        r = self._row(card1, pady=(8, 16))
+        self._label(r, "Panic Key (stop all)").grid(row=0, column=0, sticky="w")
         self.panic_sel = ctk.CTkOptionMenu(
-            hk2, values=list(HOTKEY_MAP.keys()),
-            width=100, height=30, fg_color=SURFACE_2, button_color=RED,
-            button_hover_color=RED_H, text_color=TEXT,
-            dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=11), corner_radius=8,
+            r, values=list(HOTKEY_MAP.keys()),
+            width=100, height=32, fg_color=D3, button_color=BTN,
+            button_hover_color=BTN_H, text_color=T1,
+            dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=11), corner_radius=8,
             command=self._on_panic_change)
         self.panic_sel.set("Escape")
         self.panic_sel.grid(row=0, column=1, sticky="e")
 
-        # ── Session Timer ──
-        card2 = self._settings_card(c, "\u23F1  Session Timer")
+        # ── Timer ──
+        card2 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card2.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card2, text="Session Timer", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
 
         tr = ctk.CTkFrame(card2, fg_color="transparent")
-        tr.pack(fill="x", padx=18, pady=(10, 0))
-        ctk.CTkLabel(tr, text="Auto-stop after (min):", font=ctk.CTkFont(size=11),
-                     text_color=TEXT_2).pack(side="left")
+        tr.pack(fill="x", padx=20)
+        ctk.CTkLabel(tr, text="Auto-stop after (min):", font=ctk.CTkFont(size=12),
+                     text_color=T3).pack(side="left")
         self.timer_entry = ctk.CTkEntry(
-            tr, placeholder_text="30", width=60, height=30,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            tr, placeholder_text="30", width=60, height=32,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.timer_entry.pack(side="right")
 
         tb = ctk.CTkFrame(card2, fg_color="transparent")
-        tb.pack(fill="x", padx=18, pady=(8, 0))
+        tb.pack(fill="x", padx=20, pady=(8, 16))
         self.timer_lbl = ctk.CTkLabel(tb, text="Not set",
-                                       font=ctk.CTkFont(size=13, weight="bold"),
-                                       text_color=TEXT_DIM)
+                                       font=ctk.CTkFont(size=14, weight="bold"),
+                                       text_color=T4)
         self.timer_lbl.pack(side="left")
         ctk.CTkButton(
             tb, text="Start", font=ctk.CTkFont(size=11, weight="bold"),
-            width=70, height=30, fg_color=GREEN, hover_color=GREEN_H,
-            text_color="#0A0A12", corner_radius=8,
+            width=70, height=32, fg_color=GREEN, hover_color=GREEN_H,
+            text_color="#0a0a0a", corner_radius=8,
             command=self._start_timer).pack(side="right")
         ctk.CTkButton(
             tb, text="Cancel", font=ctk.CTkFont(size=11, weight="bold"),
-            width=60, height=30, fg_color=SURFACE_2, hover_color=SURFACE_3,
-            text_color=RED, corner_radius=8, border_width=1, border_color=BORDER,
+            width=60, height=32, fg_color=BTN, hover_color=BTN_H,
+            text_color=RED, corner_radius=8,
             command=self._cancel_timer).pack(side="right", padx=(0, 6))
 
-        ctk.CTkLabel(card2, text="Stops all macros and plays a beep alert when done.",
-                     font=ctk.CTkFont(size=10), text_color=TEXT_OFF).pack(
-                         padx=18, pady=(6, 14), anchor="w")
-
         # ── Crosshair ──
-        card3 = self._settings_card(c, "\u2316  Crosshair Overlay")
+        card3 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card3.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card3, text="Crosshair Overlay", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
 
         cr1 = ctk.CTkFrame(card3, fg_color="transparent")
-        cr1.pack(fill="x", padx=18, pady=(10, 0))
+        cr1.pack(fill="x", padx=20)
         self.cross_var = ctk.StringVar(value="off")
-        ctk.CTkSwitch(cr1, text="Enable crosshair", font=ctk.CTkFont(size=11),
-                      text_color=TEXT_2, variable=self.cross_var,
+        ctk.CTkSwitch(cr1, text="Enable crosshair", font=ctk.CTkFont(size=12),
+                      text_color=T3, variable=self.cross_var,
                       onvalue="on", offvalue="off",
-                      button_color=RED, button_hover_color=RED_H,
-                      fg_color=SURFACE_2, progress_color=RED, height=24,
+                      button_color="#ffffff", button_hover_color=T2,
+                      fg_color=D3, progress_color=RED, height=24,
                       command=self._toggle_crosshair).pack(side="left")
 
         cr2 = ctk.CTkFrame(card3, fg_color="transparent")
-        cr2.pack(fill="x", padx=18, pady=(8, 0))
+        cr2.pack(fill="x", padx=20, pady=(8, 16))
         ctk.CTkLabel(cr2, text="Color", font=ctk.CTkFont(size=11),
-                     text_color=TEXT_DIM).pack(side="left")
+                     text_color=T4).pack(side="left")
         self.cross_color = ctk.CTkOptionMenu(
             cr2, values=["Red", "Green", "Cyan", "Yellow", "White"],
-            width=80, height=28, fg_color=SURFACE_2, button_color=RED,
-            button_hover_color=RED_H, text_color=TEXT,
-            dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=10), corner_radius=8)
+            width=80, height=28, fg_color=D3, button_color=BTN,
+            button_hover_color=BTN_H, text_color=T1,
+            dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=10), corner_radius=8)
         self.cross_color.set("Red")
         self.cross_color.pack(side="left", padx=(8, 16))
         ctk.CTkLabel(cr2, text="Size", font=ctk.CTkFont(size=11),
-                     text_color=TEXT_DIM).pack(side="left")
+                     text_color=T4).pack(side="left")
         self.cross_size = ctk.CTkSlider(
             cr2, from_=2, to=20, number_of_steps=18,
-            button_color=RED, button_hover_color=RED_H,
-            fg_color=BORDER, progress_color=RED, height=14, width=100)
+            button_color="#ffffff", button_hover_color=T2,
+            fg_color=D3, progress_color=RED, height=14, width=100)
         self.cross_size.set(6)
         self.cross_size.pack(side="left", padx=(8, 0))
 
-        ctk.CTkLabel(card3, text="Transparent click-through dot at screen center.",
-                     font=ctk.CTkFont(size=10), text_color=TEXT_OFF).pack(
-                         padx=18, pady=(6, 14), anchor="w")
-
         # ── Profiles ──
-        card4 = self._settings_card(c, "\U0001F4BE  Profiles")
+        card4 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card4.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card4, text="Profiles", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
 
         pr1 = ctk.CTkFrame(card4, fg_color="transparent")
-        pr1.pack(fill="x", padx=18, pady=(10, 0))
+        pr1.pack(fill="x", padx=20)
         self.profile_sel = ctk.CTkOptionMenu(
             pr1, values=ProfileManager.list_profiles() or ["(none)"],
-            width=160, height=30, fg_color=SURFACE_2, button_color=PRIMARY,
-            button_hover_color=PRIMARY_H, text_color=TEXT,
-            dropdown_fg_color=SURFACE_2, dropdown_text_color=TEXT,
-            dropdown_hover_color=SURFACE_3, font=ctk.CTkFont(size=11), corner_radius=8)
+            width=160, height=32, fg_color=D3, button_color=BTN,
+            button_hover_color=BTN_H, text_color=T1,
+            dropdown_fg_color=D2, dropdown_text_color=T2,
+            dropdown_hover_color=D3, font=ctk.CTkFont(size=11), corner_radius=8)
         self.profile_sel.pack(side="left")
 
         pr2 = ctk.CTkFrame(card4, fg_color="transparent")
-        pr2.pack(fill="x", padx=18, pady=(8, 14))
+        pr2.pack(fill="x", padx=20, pady=(8, 16))
         self.profile_name = ctk.CTkEntry(
-            pr2, placeholder_text="Profile name", width=150, height=30,
-            fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT,
+            pr2, placeholder_text="Profile name", width=150, height=32,
+            fg_color=D3, border_width=0, text_color=T1,
             font=ctk.CTkFont(size=11), corner_radius=8)
         self.profile_name.pack(side="left")
         ctk.CTkButton(
             pr2, text="Save", font=ctk.CTkFont(size=10, weight="bold"),
-            width=48, height=30, fg_color=PRIMARY, hover_color=PRIMARY_H,
-            text_color="#FFF", corner_radius=8,
+            width=48, height=32, fg_color=ACCENT, hover_color=ACCENT_H,
+            text_color=T1, corner_radius=8,
             command=self._save_profile).pack(side="left", padx=(8, 0))
         ctk.CTkButton(
             pr2, text="Load", font=ctk.CTkFont(size=10, weight="bold"),
-            width=48, height=30, fg_color=SURFACE_2, hover_color=SURFACE_3,
-            text_color=CYAN, corner_radius=8, border_width=1, border_color=BORDER,
+            width=48, height=32, fg_color=BTN, hover_color=BTN_H,
+            text_color=ACCENT, corner_radius=8,
             command=self._load_profile).pack(side="left", padx=(4, 0))
         ctk.CTkButton(
             pr2, text="Del", font=ctk.CTkFont(size=10, weight="bold"),
-            width=40, height=30, fg_color=SURFACE_2, hover_color=SURFACE_3,
-            text_color=RED, corner_radius=8, border_width=1, border_color=BORDER,
+            width=40, height=32, fg_color=BTN, hover_color=BTN_H,
+            text_color=RED, corner_radius=8,
             command=self._del_profile).pack(side="left", padx=(4, 0))
 
         # ── General ──
-        card5 = self._settings_card(c, "\u2699  General")
+        card5 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card5.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card5, text="General", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
         g1 = ctk.CTkFrame(card5, fg_color="transparent")
-        g1.pack(fill="x", padx=18, pady=(10, 14))
+        g1.pack(fill="x", padx=20, pady=(0, 16))
         self.on_top_var = ctk.StringVar(value="on")
         ctk.CTkSwitch(
-            g1, text="Always on top", font=ctk.CTkFont(size=11), text_color=TEXT_2,
+            g1, text="Always on top", font=ctk.CTkFont(size=12), text_color=T3,
             variable=self.on_top_var, onvalue="on", offvalue="off",
-            button_color=PRIMARY, button_hover_color=PRIMARY_H,
-            fg_color=SURFACE_2, progress_color=PRIMARY, height=24,
+            button_color="#ffffff", button_hover_color=T2,
+            fg_color=D3, progress_color=ACCENT, height=24,
             command=lambda: self.attributes("-topmost", self.on_top_var.get() == "on")
         ).pack(side="left")
 
-    # ─────────────────────────────────────────
-    #  ACTIVITY LOG
-    # ─────────────────────────────────────────
-    def _build_log(self):
-        log_outer = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0)
-        log_outer.pack(fill="x", side="bottom")
-
-        header = ctk.CTkFrame(log_outer, fg_color="transparent")
-        header.pack(fill="x", padx=14, pady=(8, 4))
-        ctk.CTkLabel(header, text="\u2630  Activity Log",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=TEXT_DIM).pack(side="left")
-
+        # ── Activity Log ──
+        card6 = ctk.CTkFrame(scroll, fg_color=D1, corner_radius=12)
+        card6.pack(fill="x", padx=24, pady=(0, 10))
+        ctk.CTkLabel(card6, text="Activity Log", font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=T1).pack(anchor="w", padx=20, pady=(16, 8))
         self.log_text = ctk.CTkTextbox(
-            log_outer, fg_color=SURFACE_2, text_color=TEXT_DIM,
-            font=ctk.CTkFont(family="Consolas", size=9),
-            corner_radius=8, height=55, border_width=1, border_color=BORDER)
-        self.log_text.pack(fill="x", padx=10, pady=(0, 8))
+            card6, fg_color=D2, text_color=T4,
+            font=ctk.CTkFont(family="Consolas", size=10),
+            corner_radius=8, height=100, border_width=0)
+        self.log_text.pack(fill="x", padx=20, pady=(0, 16))
         self.log_text.configure(state="disabled")
 
-    # ─────────────────────────────────────────
-    #  STATUS BAR
-    # ─────────────────────────────────────────
-    def _build_status_bar(self):
-        ctk.CTkFrame(self, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x", side="bottom")
-        bar = ctk.CTkFrame(self, fg_color=BG, height=32, corner_radius=0)
-        bar.pack(fill="x", side="bottom")
-        bar.pack_propagate(False)
-
-        # Left stats
-        self.stat_presses = ctk.CTkLabel(
-            bar, text="\u2328 0 presses", font=ctk.CTkFont(size=9),
-            text_color=TEXT_DIM)
-        self.stat_presses.pack(side="left", padx=(14, 0))
-
-        ctk.CTkLabel(bar, text="\u2022", font=ctk.CTkFont(size=8),
-                     text_color=TEXT_OFF).pack(side="left", padx=8)
-
-        self.stat_clicks = ctk.CTkLabel(
-            bar, text="\U0001F5B1 0 clicks", font=ctk.CTkFont(size=9),
-            text_color=TEXT_DIM)
-        self.stat_clicks.pack(side="left")
-
-        # Right side
-        self.session_lbl = ctk.CTkLabel(
-            bar, text="00:00",
-            font=ctk.CTkFont(family="Consolas", size=9, weight="bold"),
-            text_color=TEXT_DIM)
-        self.session_lbl.pack(side="right", padx=(0, 14))
-
-        self.timer_status = ctk.CTkLabel(
-            bar, text="", font=ctk.CTkFont(size=9), text_color=ORANGE)
-        self.timer_status.pack(side="right", padx=(0, 8))
-
     # ══════════════════════════════════════════
-    #  UI COMPONENT HELPERS
+    #  UI HELPERS
     # ══════════════════════════════════════════
 
-    def _stat_card(self, parent, label, value, color, col):
-        """Creates a mini stat card with label and big value."""
-        card = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=12,
-                            border_width=1, border_color=BORDER, height=66)
+    def _stat_chip(self, parent, label, value, color, col):
+        card = ctk.CTkFrame(parent, fg_color=D1, corner_radius=10, height=60)
         card.grid(row=0, column=col, sticky="nsew", padx=4)
         card.pack_propagate(False)
 
-        ctk.CTkLabel(card, text=label,
+        ctk.CTkLabel(card, text=label.upper(),
                      font=ctk.CTkFont(size=9, weight="bold"),
-                     text_color=TEXT_DIM).pack(pady=(12, 0))
+                     text_color=T4).pack(pady=(10, 0))
         lbl = ctk.CTkLabel(card, text=value,
-                           font=ctk.CTkFont(size=20, weight="bold"),
+                           font=ctk.CTkFont(size=18, weight="bold"),
                            text_color=color)
-        lbl.pack(pady=(2, 0))
+        lbl.pack(pady=(0, 0))
         return lbl
-
-    def _card_status_header(self, card, name):
-        """Adds a status dot + label at the top of a card."""
-        sh = ctk.CTkFrame(card, fg_color="transparent")
-        sh.pack(fill="x", padx=18, pady=(14, 10))
-
-        dot = ctk.CTkFrame(sh, width=10, height=10, corner_radius=5, fg_color=TEXT_OFF)
-        dot.pack(side="left")
-
-        status_lbl = ctk.CTkLabel(sh, text="Idle",
-                                   font=ctk.CTkFont(size=11),
-                                   text_color=TEXT_DIM)
-        status_lbl.pack(side="left", padx=(8, 0))
-
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18)
-
-        # Store references
-        setattr(self, f"{name}_dot", dot)
-        setattr(self, f"{name}_status", status_lbl)
-
-    def _settings_card(self, parent, title):
-        """Creates a settings section card with title."""
-        card = ctk.CTkFrame(parent, fg_color=SURFACE, corner_radius=16,
-                            border_width=1, border_color=BORDER)
-        card.pack(fill="x", pady=(0, 10))
-
-        hdr = ctk.CTkFrame(card, fg_color="transparent")
-        hdr.pack(fill="x", padx=18, pady=(14, 8))
-        ctk.CTkLabel(hdr, text=title,
-                     font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=TEXT_W).pack(side="left")
-        ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=18)
-        return card
 
     def _log(self, msg):
         ts = time.strftime("%H:%M:%S")
@@ -1030,18 +958,18 @@ class InvexClicker(ctk.CTk):
         self.stop_events.append(ev)
         return ev
 
-    def _update_header_status(self, running, text):
+    def _update_sidebar_status(self, running, text):
         if running:
-            self.header_dot.configure(fg_color=GREEN)
-            self.header_status_lbl.configure(text=text, text_color=GREEN)
+            self.side_status_dot.configure(fg_color=GREEN)
+            self.side_status_lbl.configure(text=text, text_color=GREEN)
         else:
             any_running = self.key_running or self.click_running or self.afk_running or self.combo_running
             if not any_running:
-                self.header_dot.configure(fg_color=TEXT_OFF)
-                self.header_status_lbl.configure(text="Ready", text_color=TEXT_DIM)
+                self.side_status_dot.configure(fg_color=T4)
+                self.side_status_lbl.configure(text="Idle", text_color=T4)
 
     # ══════════════════════════════════════════
-    #  PANIC STOP
+    #  PANIC / HOTKEY
     # ══════════════════════════════════════════
 
     def _panic_stop(self):
@@ -1056,10 +984,6 @@ class InvexClicker(ctk.CTk):
         if self.combo_running:
             self._stop_combo()
         self._log("PANIC STOP - all macros halted")
-
-    # ══════════════════════════════════════════
-    #  HOTKEY LISTENER
-    # ══════════════════════════════════════════
 
     def _hotkey_listener(self):
         prev_hk = False
@@ -1114,10 +1038,8 @@ class InvexClicker(ctk.CTk):
         self.key_count = 0
         self.active_keys = self._get_keys()
         mode = self.key_mode.get()
-        self.key_btn.configure(text="\u25A0  STOP", fg_color=RED, hover_color=RED_H)
-        self.key_dot.configure(fg_color=GREEN)
-        self.key_status.configure(text="Running", text_color=GREEN)
-        self._update_header_status(True, "Active")
+        self.key_btn.configure(text="Stop", fg_color=RED, hover_color=RED_H)
+        self._update_sidebar_status(True, "Active")
         self._log(f"Key: {', '.join(self.active_keys)} ({mode})")
         ev = self._new_stop_event()
         if mode == "Hold":
@@ -1133,10 +1055,8 @@ class InvexClicker(ctk.CTk):
             for k in self.active_keys:
                 vk, sc = KEYS[k]
                 InputEngine.key_up(vk, sc)
-        self.key_btn.configure(text="\u25B6  START", fg_color=PRIMARY, hover_color=PRIMARY_H)
-        self.key_dot.configure(fg_color=TEXT_OFF)
-        self.key_status.configure(text="Idle", text_color=TEXT_DIM)
-        self._update_header_status(False, "")
+        self.key_btn.configure(text="Start", fg_color=ACCENT, hover_color=ACCENT_H)
+        self._update_sidebar_status(False, "")
 
     def _key_spam(self, ev):
         while self.key_running and not ev.is_set():
@@ -1148,7 +1068,7 @@ class InvexClicker(ctk.CTk):
                 self.key_count += 1
             self.after(0, lambda: self.key_stat_count.configure(text=f"{self.key_count:,}"))
             self.after(0, lambda: self.stat_presses.configure(
-                text=f"\u2328 {self.key_count:,} presses"))
+                text=f"{self.key_count:,} presses"))
             delay = 1.0 / max(1, int(self.key_speed.get()))
             if self.key_human_var.get() == "on":
                 delay *= random.uniform(0.7, 1.3)
@@ -1175,22 +1095,16 @@ class InvexClicker(ctk.CTk):
     def _start_click(self):
         self.click_running = True
         self.click_count = 0
-        self.click_btn.configure(text="\u25A0  STOP", fg_color=RED, hover_color=RED_H,
-                                 text_color="#FFF")
-        self.click_dot.configure(fg_color=GREEN)
-        self.click_status.configure(text="Running", text_color=GREEN)
-        self._update_header_status(True, "Active")
+        self.click_btn.configure(text="Stop", fg_color=RED, hover_color=RED_H, text_color=T1)
+        self._update_sidebar_status(True, "Active")
         self._log(f"Clicker: {self.click_type.get()}")
         ev = self._new_stop_event()
         threading.Thread(target=self._click_loop, args=(ev,), daemon=True).start()
 
     def _stop_click(self):
         self.click_running = False
-        self.click_btn.configure(text="\u25B6  START", fg_color=CYAN, hover_color=CYAN_H,
-                                 text_color="#0A0A12")
-        self.click_dot.configure(fg_color=TEXT_OFF)
-        self.click_status.configure(text="Idle", text_color=TEXT_DIM)
-        self._update_header_status(False, "")
+        self.click_btn.configure(text="Start", fg_color=ACCENT, hover_color=ACCENT_H, text_color=T1)
+        self._update_sidebar_status(False, "")
 
     def _click_loop(self, ev):
         burst = self.burst_var.get() == "on"
@@ -1213,7 +1127,7 @@ class InvexClicker(ctk.CTk):
             self.after(0, lambda: self.click_stat_count.configure(
                 text=f"{self.click_count:,}"))
             self.after(0, lambda: self.stat_clicks.configure(
-                text=f"\U0001F5B1 {self.click_count:,} clicks"))
+                text=f"{self.click_count:,} clicks"))
             if burst and self.click_count >= burst_max:
                 self.after(0, self._stop_click)
                 self._log(f"Burst done: {burst_max} clicks")
@@ -1248,20 +1162,18 @@ class InvexClicker(ctk.CTk):
 
     def _start_afk(self):
         self.afk_running = True
-        self.afk_btn.configure(text="\u25A0  STOP ANTI-AFK", fg_color=RED,
-                               hover_color=RED_H, text_color="#FFF")
-        self.afk_dot.configure(fg_color=GREEN)
-        self._update_header_status(True, "Anti-AFK")
+        self.afk_btn.configure(text="Stop Anti-AFK", fg_color=RED,
+                               hover_color=RED_H, text_color=T1)
+        self._update_sidebar_status(True, "Anti-AFK")
         self._log("Anti-AFK started")
         ev = self._new_stop_event()
         threading.Thread(target=self._afk_loop, args=(ev,), daemon=True).start()
 
     def _stop_afk(self):
         self.afk_running = False
-        self.afk_btn.configure(text="\u25B6  START ANTI-AFK", fg_color=GREEN,
-                               hover_color=GREEN_H, text_color="#0A0A12")
-        self.afk_dot.configure(fg_color=TEXT_OFF)
-        self._update_header_status(False, "")
+        self.afk_btn.configure(text="Start Anti-AFK", fg_color=GREEN,
+                               hover_color=GREEN_H, text_color="#0a0a0a")
+        self._update_sidebar_status(False, "")
 
     def _afk_loop(self, ev):
         while self.afk_running and not ev.is_set():
@@ -1318,7 +1230,7 @@ class InvexClicker(ctk.CTk):
 
         if not self.combo_steps:
             lbl = ctk.CTkLabel(self.combo_list_frame, text="No steps added yet",
-                               font=ctk.CTkFont(size=11), text_color=TEXT_OFF)
+                               font=ctk.CTkFont(size=11), text_color=T4)
             lbl.pack(pady=10)
             self.combo_labels.append(lbl)
             return
@@ -1327,7 +1239,7 @@ class InvexClicker(ctk.CTk):
             txt = f"  {i+1}. [{step['key']}]  \u2192  {step['delay']}ms"
             lbl = ctk.CTkLabel(self.combo_list_frame, text=txt,
                                font=ctk.CTkFont(family="Consolas", size=11),
-                               text_color=TEXT_2, anchor="w")
+                               text_color=T3, anchor="w")
             lbl.pack(fill="x", padx=4, pady=1)
             self.combo_labels.append(lbl)
 
@@ -1342,20 +1254,18 @@ class InvexClicker(ctk.CTk):
             self._log("No combo steps!")
             return
         self.combo_running = True
-        self.combo_btn.configure(text="\u25A0  STOP COMBO", fg_color=RED,
-                                 hover_color=RED_H, text_color="#FFF")
-        self.combo_dot.configure(fg_color=GREEN)
-        self._update_header_status(True, "Combo")
+        self.combo_btn.configure(text="Stop Combo", fg_color=RED,
+                                 hover_color=RED_H, text_color=T1)
+        self._update_sidebar_status(True, "Combo")
         self._log(f"Combo started ({len(self.combo_steps)} steps)")
         ev = self._new_stop_event()
         threading.Thread(target=self._combo_loop, args=(ev,), daemon=True).start()
 
     def _stop_combo(self):
         self.combo_running = False
-        self.combo_btn.configure(text="\u25B6  START COMBO", fg_color=ORANGE,
-                                 hover_color=ORANGE_H, text_color="#0A0A12")
-        self.combo_dot.configure(fg_color=TEXT_OFF)
-        self._update_header_status(False, "")
+        self.combo_btn.configure(text="Start Combo", fg_color=ORANGE,
+                                 hover_color=ORANGE_H, text_color="#0a0a0a")
+        self._update_sidebar_status(False, "")
 
     def _combo_loop(self, ev):
         while self.combo_running and not ev.is_set():
